@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>ຜູ້ດູແລລະບົບ</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+<style>
+html,body{height:auto;min-height:100%}
+body{overscroll-behavior:auto}
+.wrap{max-width:860px;margin:0 auto;padding:18px 16px 60px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.srow{display:grid;grid-template-columns:1fr auto;gap:6px 12px;align-items:center;width:100%;text-align:left;padding:12px 14px;background:var(--surface);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+.srow small{display:block}
+.tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12.5px;font-weight:600;background:var(--accent-soft);color:var(--accent)}
+.tag.off{background:var(--bad-soft);color:var(--bad)}
+.tag.warn{background:var(--busy-soft);color:var(--busy)}
+select{font:inherit;font-size:16px;min-height:46px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:0 10px;width:100%}
+.kp{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.kp div{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.kp b{font-size:22px;display:block;color:var(--accent)}
+@media(max-width:520px){.kp{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h2>ຜູ້ດູແລລະບົບ</h2><div><a class="btn ghost small" href="app.html">ໄປແອັບ</a> <button class="btn ghost small" id="out">ອອກ</button></div></div>
+  <div id="box"><div class="loading">ກຳລັງໂຫຼດ…</div></div>
+</div>
+<div id="sheet"></div>
+<div id="toast" hidden role="status"></div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function(){
+'use strict';
+var $=function(s){ return document.querySelector(s); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var CFG=window.APP_CONFIG||{}, ROWS=[], Q='', CUR=null, tt=null;
+function toast(m){ var t=$('#toast'); t.textContent=m; t.hidden=false; clearTimeout(tt); tt=setTimeout(function(){ t.hidden=true; },2400); }
+function d(x){ if(!x) return '-'; var o=new Date(x); return String(o.getDate()).padStart(2,'0')+'/'+String(o.getMonth()+1).padStart(2,'0')+'/'+o.getFullYear(); }
+function endOf(s){ return Math.max(Date.parse(s.trial_ends_at)||0, s.paid_until?Date.parse(s.paid_until):0); }
+function isOn(s){ return s.status==='active' && endOf(s)>Date.now(); }
+function planName(p){ if(p==='trial') return 'ທົດລອງ'; var x=(CFG.plans||[]).filter(function(y){ return y.id===p; })[0]; return x?x.name:p; }
+function login(l){ var dm='@'+(CFG.phoneDomain||''); l=String(l||''); return l.slice(-dm.length)===dm?l.slice(0,-dm.length):l; }
+function list(){
+  var q=Q.toLowerCase();
+  var rows=ROWS.filter(function(s){ return !q || (s.name+' '+s.slug+' '+login(s.owner_login)).toLowerCase().indexOf(q)>=0; });
+  var on=ROWS.filter(isOn).length, tr=ROWS.filter(function(s){ return s.plan==='trial'; }).length, pd=ROWS.filter(function(s){ return s.plan!=='trial' && isOn(s); }).length;
+  var h='<div class="kp"><div><small>ຮ້ານທັງໝົດ</small><b class="num">'+ROWS.length+'</b></div><div><small>ໃຊ້ງານຢູ່</small><b class="num">'+on+'</b></div><div><small>ທົດລອງ</small><b class="num">'+tr+'</b></div><div><small>ຈ່າຍເງິນແລ້ວ</small><b class="num">'+pd+'</b></div></div>'+
+    '<input id="q" placeholder="ຄົ້ນຫາຊື່ຮ້ານ / ລິ້ງ / ເບີ" value="'+esc(Q)+'" style="margin-bottom:12px">';
+  if(!rows.length) h+='<div class="empty card">ບໍ່ພົບຮ້ານ</div>';
+  rows.forEach(function(s){
+    var on=isOn(s), days=Math.ceil((endOf(s)-Date.now())/86400000);
+    h+='<button class="srow" data-id="'+esc(s.id)+'"><span><b>'+esc(s.name)+'</b> <small class="num">/'+esc(s.slug)+'</small><small>'+esc(login(s.owner_login))+' · ສະມາຊິກ '+s.members+' · ສະໝັກ '+d(s.created_at)+'</small></span>'+
+      '<span style="text-align:right"><span class="tag '+(on?(days<=14?'warn':''):'off')+'">'+esc(planName(s.plan))+(s.status!=='active'?' · ລະງັບ':(on?'':' · ໝົດອາຍຸ'))+'</span><small class="num">ຮອດ '+d(endOf(s))+'</small></span></button>';
+  });
+  $('#box').innerHTML=h;
+  var q2=$('#q'); if(q2 && Q){ q2.focus(); q2.setSelectionRange(Q.length,Q.length); }
+}
+function edit(s){
+  CUR=s;
+  var opts=['trial','normal','medium','premium'].map(function(p){ return '<option value="'+p+'"'+(p===s.plan?' selected':'')+'>'+esc(planName(p))+'</option>'; }).join('');
+  var pu=s.paid_until?new Date(s.paid_until).toISOString().slice(0,10):'';
+  $('#sheet').innerHTML='<div class="scrim" id="scrim"><div class="sheet"><h3>'+esc(s.name)+' <small>/'+esc(s.slug)+'</small></h3>'+
+    '<div class="muted">ເຈົ້າຂອງ: '+esc(login(s.owner_login))+' · ທົດລອງຮອດ '+d(s.trial_ends_at)+'</div>'+
+    '<label class="f">ແພັກເກດ<select id="ePlan">'+opts+'</select></label>'+
+    '<label class="f">ຈ່າຍເງິນຮອດວັນທີ<input id="ePaid" type="date" value="'+pu+'"></label>'+
+    '<div class="quick"><button data-add="30">+30 ວັນ</button><button data-add="90">+3 ເດືອນ</button><button data-add="365">+1 ປີ</button><button data-add="0">ລ້າງ</button></div>'+
+    '<label class="f">ສະຖານະ<select id="eSt"><option value="active"'+(s.status==='active'?' selected':'')+'>ໃຊ້ງານ</option><option value="suspended"'+(s.status!=='active'?' selected':'')+'>ລະງັບ</option></select></label>'+
+    '<div class="row"><button class="btn ghost" id="eNo">ຍົກເລີກ</button><button class="btn primary" id="eOk">ບັນທຶກ</button></div></div></div>';
+}
+function add(days){
+  var inp=$('#ePaid'); if(days===0){ inp.value=''; return; }
+  var base=Math.max(Date.now(), inp.value?Date.parse(inp.value):0);
+  inp.value=new Date(base+days*86400000).toISOString().slice(0,10);
+}
+function save(){
+  var s=CUR, plan=$('#ePlan').value, st=$('#eSt').value, pv=$('#ePaid').value;
+  var paid=pv?new Date(pv+'T23:59:59').toISOString():null;
+  $('#eOk').disabled=true;
+  Api.rpc('admin_set_plan',{p_shop:s.id,p_plan:plan,p_paid_until:paid,p_status:st}).then(function(){
+    toast('ບັນທຶກແລ້ວ'); $('#sheet').innerHTML=''; load();
+  },function(e){ $('#eOk').disabled=false; toast(Api.errText(e)); });
+}
+function load(){
+  Api.rpc('admin_list_shops').then(function(r){ ROWS=r||[]; list(); },function(e){
+    $('#box').innerHTML='<div class="empty card"><b>'+(/forbidden/.test(String(e.message))?'ບັນຊີນີ້ບໍ່ແມ່ນຜູ້ດູແລລະບົບ':esc(Api.errText(e)))+'</b></div>';
+  });
+}
+document.addEventListener('click',function(e){
+  var t=e.target;
+  if(t.id==='out'){ Api.signOut().then(function(){ location.replace('login.html'); }); return; }
+  var r=t.closest('.srow'); if(r){ var s=ROWS.filter(function(x){ return x.id===r.dataset.id; })[0]; if(s) edit(s); return; }
+  if(t.dataset && t.dataset.add!==undefined){ add(+t.dataset.add); return; }
+  if(t.id==='eOk') save();
+  if(t.id==='eNo' || t.id==='scrim') $('#sheet').innerHTML='';
+});
+document.addEventListener('input',function(e){ if(e.target.id==='q'){ Q=e.target.value; list(); } });
+if(!Api.configured()){ $('#box').innerHTML='<div class="empty card">ຍັງບໍ່ໄດ້ຕັ້ງຄ່າເຊີບເວີ (config.js)</div>'; }
+else Api.session().then(function(s){ if(!s) location.replace('login.html'); else load(); },function(){ location.replace('login.html'); });
+})();
+</script>
+</body>
+</html>

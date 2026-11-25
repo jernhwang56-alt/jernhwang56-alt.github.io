@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E7C86">
+<title>ເຂົ້າສູ່ລະບົບ</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+<style>
+html,body{height:auto;min-height:100%}
+body{overscroll-behavior:auto}
+.wrap{max-width:440px;margin:0 auto;padding:28px 18px 60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;margin-bottom:20px;text-decoration:none;color:var(--ink)}
+.brand i{width:36px;height:36px;border-radius:10px;background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cpath d='M9 12h16M9 17h16M9 22h9' stroke='white' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E") center/cover;display:inline-block}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:16px}
+.tabs button{min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:600}
+.tabs button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+form{display:flex;flex-direction:column;gap:14px}
+.err{background:var(--bad-soft);color:var(--bad);border-radius:12px;padding:10px 14px;font-weight:600}
+.hint{font-size:13px;color:var(--muted);margin-top:-6px}
+.joinlink{text-align:center;margin-top:18px;font-size:14px}
+.joinlink a,.joinlink button{color:var(--accent);text-decoration:underline;font-size:14px}
+.setup{background:var(--busy-soft);color:var(--busy);border-radius:12px;padding:12px 14px;font-weight:600;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="brand" href="index.html"><i></i><span id="brand">POS</span></a>
+  <div id="box"></div>
+</div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function(){
+'use strict';
+var $=function(s){ return document.querySelector(s); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+var CFG=window.APP_CONFIG||{}, P=new URLSearchParams(location.search);
+var JOIN=(P.get('join')||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8);
+var st={mode: JOIN?'join':(P.get('mode')==='signup'?'signup':'login'), busy:false, err:'', signed:false, f:{}};
+$('#brand').textContent=CFG.brand||'POS';
+document.title=(CFG.brand||'POS')+' · ເຂົ້າສູ່ລະບົບ';
+
+function randSlug(){ return 'shop'+Math.floor(1000+Math.random()*9000); }
+function field(id,label,type,val,extra){ return '<label class="f">'+label+'<input id="'+id+'" type="'+(type||'text')+'" value="'+esc(val||'')+'" '+(extra||'')+'></label>'; }
+function tabs(){
+  return '<div class="tabs"><button type="button" data-m="login" aria-pressed="'+(st.mode==='login')+'">ເຂົ້າສູ່ລະບົບ</button><button type="button" data-m="signup" aria-pressed="'+(st.mode==='signup')+'">ສະໝັກຮ້ານໃໝ່</button></div>';
+}
+function render(){
+  var h='';
+  if(!Api.configured()) h+='<div class="setup">ເວັບຍັງບໍ່ໄດ້ຕັ້ງຄ່າເຊີບເວີ — ໃສ່ Supabase URL ແລະ Key ໃນໄຟລ໌ config.js ກ່ອນ</div>';
+  if(st.signed){ // logged in but no shop yet
+    h+='<h2>ສ້າງຮ້ານຂອງທ່ານ</h2><p class="muted">ບັນຊີຂອງທ່ານພ້ອມແລ້ວ ຕໍ່ໄປໃຫ້ສ້າງຮ້ານ ຫຼື ເຂົ້າຮ່ວມຮ້ານທີ່ມີຄົນເຊີນ</p>'+shopForm()+
+      '<div class="joinlink"><button type="button" data-m="join">ມີລະຫັດເຊີນຈາກຮ້ານ?</button> · <button type="button" id="out">ອອກຈາກລະບົບ</button></div>';
+    if(st.mode==='join') h=h.replace(/<h2>[\s\S]*$/,'')+joinOnly();
+  } else if(st.mode==='join'){
+    h+='<h2>ເຂົ້າຮ່ວມຮ້ານ</h2><p class="muted">ໃສ່ລະຫັດເຊີນທີ່ເຈົ້າຂອງຮ້ານໃຫ້ ແລະ ຕັ້ງບັນຊີຂອງທ່ານ (ຖ້າມີບັນຊີແລ້ວ ໃສ່ເບີ/ລະຫັດເດີມ)</p>'+
+      '<form id="f">'+field('code','ລະຫັດເຊີນ','text',JOIN||st.f.code,'maxlength="8" autocapitalize="characters" autocomplete="off"')+
+      field('login','ເບີໂທ ຫຼື ອີເມວ','text',st.f.login,'inputmode="email" autocomplete="username"')+
+      field('pass','ລະຫັດຜ່ານ (ຢ່າງໜ້ອຍ 6 ຕົວ)','password','','autocomplete="current-password"')+
+      (st.err?'<div class="err">'+esc(st.err)+'</div>':'')+
+      '<button class="btn primary block" '+(st.busy?'disabled':'')+'>'+(st.busy?'ກຳລັງດຳເນີນການ…':'ເຂົ້າຮ່ວມຮ້ານ')+'</button></form>'+
+      '<div class="joinlink"><button type="button" data-m="login">ກັບໄປເຂົ້າສູ່ລະບົບ</button></div>';
+  } else if(st.mode==='signup'){
+    h+=tabs()+'<form id="f">'+field('shop','ຊື່ຮ້ານ','text',st.f.shop,'maxlength="80" autocomplete="organization"')+
+      field('slug','ຊື່ລິ້ງຂອງຮ້ານ (ພາສາອັງກິດ/ຕົວເລກ)','text',st.f.slug||randSlug(),'maxlength="30" autocapitalize="none" autocomplete="off"')+
+      '<div class="hint">ໃຊ້ໃນລິ້ງ QR ຂອງລູກຄ້າ ເຊັ່ນ moa-cafe · a-z, 0-9 ແລະ - ຍາວ 3-30 ຕົວ</div>'+
+      field('login','ເບີໂທ ຫຼື ອີເມວຂອງເຈົ້າຂອງຮ້ານ','text',st.f.login,'inputmode="email" autocomplete="username"')+
+      field('pass','ຕັ້ງລະຫັດຜ່ານ (ຢ່າງໜ້ອຍ 6 ຕົວ)','password','','autocomplete="new-password"')+
+      (st.err?'<div class="err">'+esc(st.err)+'</div>':'')+
+      '<button class="btn primary block" '+(st.busy?'disabled':'')+'>'+(st.busy?'ກຳລັງສ້າງ…':'ເລີ່ມທົດລອງຟຣີ '+(CFG.trialDays||90)+' ວັນ')+'</button></form>'+
+      '<div class="joinlink"><button type="button" data-m="join">ມີລະຫັດເຊີນຈາກຮ້ານ?</button></div>';
+  } else {
+    h+=tabs()+'<form id="f">'+field('login','ເບີໂທ ຫຼື ອີເມວ','text',st.f.login,'inputmode="email" autocomplete="username"')+
+      field('pass','ລະຫັດຜ່ານ','password','','autocomplete="current-password"')+
+      (st.err?'<div class="err">'+esc(st.err)+'</div>':'')+
+      '<button class="btn primary block" '+(st.busy?'disabled':'')+'>'+(st.busy?'ກຳລັງເຂົ້າ…':'ເຂົ້າສູ່ລະບົບ')+'</button></form>'+
+      '<div class="joinlink"><button type="button" data-m="join">ມີລະຫັດເຊີນຈາກຮ້ານ?</button></div>';
+  }
+  $('#box').innerHTML=h;
+}
+function shopForm(){
+  return '<form id="fs">'+field('shop','ຊື່ຮ້ານ','text',st.f.shop,'maxlength="80"')+field('slug','ຊື່ລິ້ງຂອງຮ້ານ (a-z, 0-9, -)','text',st.f.slug||randSlug(),'maxlength="30" autocapitalize="none"')+
+    (st.err?'<div class="err">'+esc(st.err)+'</div>':'')+'<button class="btn primary block" '+(st.busy?'disabled':'')+'>ສ້າງຮ້ານ</button></form>';
+}
+function joinOnly(){
+  return '<h2>ເຂົ້າຮ່ວມຮ້ານ</h2><form id="fj">'+field('code','ລະຫັດເຊີນ','text',JOIN||st.f.code,'maxlength="8" autocapitalize="characters"')+(st.err?'<div class="err">'+esc(st.err)+'</div>':'')+
+    '<button class="btn primary block" '+(st.busy?'disabled':'')+'>ເຂົ້າຮ່ວມ</button></form>';
+}
+function v(id){ var e=$('#'+id); return e?e.value.trim():''; }
+function keep(){ st.f={shop:v('shop'),slug:v('slug').toLowerCase(),login:v('login'),code:v('code').toUpperCase()}; }
+function fail(e){ st.busy=false; st.err=Api.errText(e); render(); }
+function go(u){ if(window.__nav) window.__nav(u); else location.replace(u); }
+function goApp(){ go('app.html'); }
+
+function checkSlug(s){ return /^[a-z0-9][a-z0-9-]{2,29}$/.test(s); }
+function afterAuth(){
+  return Api.myShops().then(function(list){ if(list.length) goApp(); else { st.busy=false; st.signed=true; st.mode='login'; st.err=''; render(); } });
+}
+function doLogin(){
+  keep(); var pass=$('#pass').value;
+  if(!st.f.login||!pass){ st.err='ໃສ່ເບີ/ອີເມວ ແລະ ລະຫັດຜ່ານ'; return render(); }
+  st.busy=true; st.err=''; render();
+  Api.signIn(st.f.login,pass).then(afterAuth).then(null,fail);
+}
+function doSignup(){
+  keep(); var pass=$('#pass').value;
+  if(!st.f.shop){ st.err='ໃສ່ຊື່ຮ້ານ'; return render(); }
+  if(!checkSlug(st.f.slug)){ st.err='ຊື່ລິ້ງໃຊ້ໄດ້ແຕ່ a-z, 0-9 ແລະ - ຍາວ 3-30 ຕົວ'; return render(); }
+  if(!st.f.login){ st.err='ໃສ່ເບີໂທ ຫຼື ອີເມວ'; return render(); }
+  if(pass.length<6){ st.err='ລະຫັດຜ່ານຢ່າງໜ້ອຍ 6 ຕົວ'; return render(); }
+  st.busy=true; st.err=''; render();
+  Api.signUp(st.f.login,pass).then(function(){
+    return Api.rpc('create_shop',{p_name:st.f.shop,p_slug:st.f.slug});
+  }).then(function(){ goApp(); },function(e){
+    // account may exist already but shop creation failed (e.g. slug taken): let them retry the shop step
+    Api.session().then(function(s){ if(s){ st.signed=true; st.busy=false; st.err=Api.errText(e); render(); } else fail(e); },function(){ fail(e); });
+  });
+}
+function doJoin(){
+  keep(); var pass=$('#pass')?$('#pass').value:'', code=st.f.code||JOIN;
+  if(code.length<6){ st.err='ໃສ່ລະຫັດເຊີນ'; return render(); }
+  function join(){ return Api.rpc('join_shop',{p_code:code}).then(goApp); }
+  if(st.signed){ st.busy=true; st.err=''; render(); return join().then(null,fail); }
+  if(!st.f.login||pass.length<6){ st.err='ໃສ່ເບີ/ອີເມວ ແລະ ລະຫັດຜ່ານ (ຢ່າງໜ້ອຍ 6 ຕົວ)'; return render(); }
+  st.busy=true; st.err=''; render();
+  Api.signUp(st.f.login,pass).then(null,function(e){
+    if(/already registered/i.test(String(e&&e.message))) return Api.signIn(st.f.login,pass);
+    throw e;
+  }).then(join).then(null,fail);
+}
+function doShop(){
+  keep();
+  if(!st.f.shop){ st.err='ໃສ່ຊື່ຮ້ານ'; return render(); }
+  if(!checkSlug(st.f.slug)){ st.err='ຊື່ລິ້ງໃຊ້ໄດ້ແຕ່ a-z, 0-9 ແລະ - ຍາວ 3-30 ຕົວ'; return render(); }
+  st.busy=true; st.err=''; render();
+  Api.rpc('create_shop',{p_name:st.f.shop,p_slug:st.f.slug}).then(goApp,fail);
+}
+document.addEventListener('submit',function(e){
+  e.preventDefault(); if(st.busy) return;
+  var id=e.target.id;
+  if(id==='fs') doShop(); else if(id==='fj') doJoin();
+  else if(st.mode==='signup') doSignup(); else if(st.mode==='join') doJoin(); else doLogin();
+});
+document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-m]'); if(b){ keep(); st.mode=b.dataset.m; st.err=''; render(); return; }
+  if(e.target.id==='out'){ Api.signOut().then(function(){ st.signed=false; st.mode='login'; render(); }); }
+});
+
+render();
+if(Api.configured()){
+  Api.session().then(function(s){
+    if(!s) return;
+    Api.myShops().then(function(list){
+      if(list.length && !JOIN) return goApp();
+      st.signed=true; if(JOIN) st.mode='join'; render();
+    });
+  },function(){});
+}
+window.__login={st:st};
+})();
+</script>
+</body>
+</html>

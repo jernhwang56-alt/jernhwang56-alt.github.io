@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ກວດການຕັ້ງຄ່າ</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+<style>
+html,body{height:auto;min-height:100%}body{overscroll-behavior:auto}
+.wrap{max-width:520px;margin:0 auto;padding:24px 16px 60px}
+.chk{display:flex;gap:12px;align-items:flex-start;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;margin-bottom:10px}
+.dot{width:26px;height:26px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;background:var(--muted)}
+.dot.ok{background:var(--ok)}.dot.no{background:var(--bad)}.dot.wait{background:var(--busy)}
+.chk b{display:block}.chk small{display:block;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>ກວດການຕັ້ງຄ່າລະບົບ</h2>
+  <p class="muted">ໜ້านີ້ໃຊ້ກວດວ່າເຊື່ອມ Supabase ສຳເລັດ ແລະ ຕັ້ງຄ່າຖືກຕ້ອງ. ກວດແລ້ວຈະລຶບໜ້ານີ້ອອກກໍ່ໄດ້.</p>
+  <div id="list"></div>
+  <button class="btn primary block" id="auth" style="margin-top:6px">ທົດສອບການສະໝັກສະມາຊິກ</button>
+  <p class="muted" style="font-size:13px">ປຸ່ມນີ້ສ້າງບັນຊີທົດສອບ 1 ບັນຊີ (ລຶບໄດ້ທີ່ Supabase → Authentication → Users)</p>
+</div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function(){
+'use strict';
+var C=window.APP_CONFIG||{}, R=[
+  {k:'cfg',t:'ໃສ່ Supabase URL ແລະ Key ໃນ config.js',s:'wait',m:''},
+  {k:'db',t:'ເຊື່ອມຖານຂໍ້ມູນ ແລະ ຕິດຕັ້ງ schema.sql ແລ້ວ',s:'wait',m:''},
+  {k:'auth',t:'ສະໝັກສະມາຊິກດ້ວຍເບີໂທໄດ້ (ປິດ Confirm email ແລ້ວ)',s:'wait',m:'ກົດປຸ່ມລຸ່ມເພື່ອທົດສອບ'}
+];
+function esc(s){ return String(s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function draw(){
+  document.getElementById('list').innerHTML=R.map(function(r){
+    return '<div class="chk"><span class="dot '+r.s+'">'+(r.s==='ok'?'✓':r.s==='no'?'✕':'…')+'</span><div><b>'+esc(r.t)+'</b>'+(r.m?'<small class="muted">'+esc(r.m)+'</small>':'')+'</div></div>';
+  }).join('');
+}
+function set(k,s,m){ R.forEach(function(r){ if(r.k===k){ r.s=s; r.m=m||''; } }); draw(); }
+function run(){
+  draw();
+  if(!Api.configured()){ set('cfg','no','ຍັງບໍ່ໄດ້ໃສ່ supabaseUrl / supabaseKey ໃນໄຟລ໌ config.js ແລ້ວອັບໂຫຼດໃໝ່'); set('db','no','ລໍຖ້າຂັ້ນຕອນທຳອິດ'); return; }
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)\/?$/.test(C.supabaseUrl)) { set('cfg','no','URL ຕ້ອງມີຮູບແບບ https://xxxx.supabase.co'); return; }
+  set('cfg','ok','');
+  Api.rpc('public_menu',{p_slug:'check-setup-zz'}).then(function(r){
+    if(r && r.error==='not_found') set('db','ok','ເຊື່ອມຕໍ່ໄດ້ ແລະ schema ຕິດຕັ້ງແລ້ວ');
+    else set('db','no','ຜົນລັບບໍ່ຄາດຄິດ: '+JSON.stringify(r));
+  },function(e){
+    var m=String(e&&e.message||e);
+    set('db','no', /Could not find the function|does not exist|schema cache/i.test(m) ? 'ເຊື່ອມຕໍ່ໄດ້ ແຕ່ຍັງບໍ່ໄດ້ຕິດຕັ້ງ schema.sql — ເອົາໄປວາງໃນ SQL Editor ແລ້ວກົດ Run' : (/Invalid API key|JWT/i.test(m) ? 'Key ບໍ່ຖືກ — ກວດ supabaseKey (ໃຊ້ anon / publishable key)' : 'ເຊື່ອມຕໍ່ບໍ່ໄດ້: '+m));
+  });
+}
+document.getElementById('auth').addEventListener('click',function(){
+  if(!Api.configured()){ run(); return; }
+  var n='0'+(20000000+Math.floor(Math.random()*9999999)), pw='test'+Math.random().toString(36).slice(2,8);
+  set('auth','wait','ກຳລັງທົດສອບ…');
+  Api.signUp(n,pw).then(function(){ return Api.signOut(); }).then(function(){ set('auth','ok','ສະໝັກດ້ວຍເບີໂທໄດ້ ແລະ ເຂົ້າລະບົບທັນທີ'); },function(e){
+    var m=String(e&&e.message||e);
+    set('auth','no', m==='confirm_email_on' ? 'ຍັງເປີດ “Confirm email” ຢູ່ — ໄປ Supabase → Authentication → Sign In / Providers → Email ແລ້ວປິດ' : (Api.errText(e)+' ('+m+')'));
+  });
+});
+run();
+window.__check={R:R,run:run};
+})();
+</script>
+</body>
+</html>

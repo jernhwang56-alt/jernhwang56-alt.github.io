@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E7C86">
+<title>ສັ່ງອາຫານ</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="app.css">
+<style>
+#top{justify-content:flex-start;gap:12px}
+#top .shop b{font-size:18px}
+.tblname{margin-left:auto;background:var(--accent-soft);color:var(--accent);font-weight:700;border-radius:999px;padding:6px 14px;white-space:nowrap}
+.cartbtn{width:100%}
+.okbox{text-align:center;padding:26px 16px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.okbox .tick{width:72px;height:72px;border-radius:50%;background:var(--ok-soft);color:var(--ok);display:flex;align-items:center;justify-content:center;font-size:38px}
+.okbox .tick.wait{background:var(--busy-soft);color:var(--busy)}
+.okbox .tick.no{background:var(--bad-soft);color:var(--bad)}
+.tpick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tpick button{min-height:64px;border-radius:14px;border:1px solid var(--line);background:var(--surface);font-weight:700;font-size:18px}
+
+.note-in{margin-top:6px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top"></header>
+  <main id="view"></main>
+  <div id="bar"></div>
+  <div id="sheet"></div>
+  <div id="toast" hidden role="status"></div>
+</div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function(){
+'use strict';
+var $=function(s){ return document.querySelector(s); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function fmt(n){ return Math.round(n||0).toLocaleString('en-US'); }
+function sum(a,f){ return a.reduce(function(s,x){ return s+f(x); },0); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function nonce(){ var c='abcdefghijklmnopqrstuvwxyz0123456789', o=''; for(var i=0;i<10;i++) o+=c.charAt(Math.floor(Math.random()*c.length)); return o; }
+var P=new URLSearchParams(location.search), SLUG=(P.get('s')||'').toLowerCase();
+var M={shop:null, items:[], table:null, cart:[], cat:null, view:'menu', name:'', sending:false, sent:null, status:'new', err:'', poll:null};
+var tt=null;
+function toast(m){ var t=$('#toast'); t.textContent=m; t.hidden=false; clearTimeout(tt); tt=setTimeout(function(){ t.hidden=true; },2600); }
+var IC={ back:'<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>' };
+
+function tableName(t){ return t==='tk' ? 'ສັ່ງກັບບ້ານ' : 'ໂຕະ '+String(t).slice(1); }
+function validTable(t){
+  if(t==='tk') return true;
+  var m=/^t(\d{1,3})$/.exec(t||''); return !!m && +m[1]>=1 && +m[1]<=M.shop.tables;
+}
+function cats(){ var o=[]; M.items.forEach(function(m){ var c=m.cat||'ອື່ນໆ'; if(o.indexOf(c)<0) o.push(c); }); return o; }
+function qty(id){ return sum(M.cart.filter(function(l){ return l.mid===id; }),function(l){ return l.q; }); }
+function count(){ return sum(M.cart,function(l){ return l.q; }); }
+function subtotal(){ return sum(M.cart,function(l){ var m=M.items.find(function(x){ return x.id===l.mid; }); return (m?m.price:0)*l.q; }); }
+function saveCart(){ try{ sessionStorage.setItem('m.cart.'+SLUG+'.'+M.table, JSON.stringify(M.cart)); }catch(e){} }
+function loadCart(){ try{ var c=JSON.parse(sessionStorage.getItem('m.cart.'+SLUG+'.'+M.table)||'[]'); if(Array.isArray(c)) M.cart=c.filter(function(l){ return l && typeof l.mid==='string' && l.q>0 && l.q<100 && M.items.some(function(m){ return m.id===l.mid; }); }).map(function(l){ return {mid:l.mid,q:l.q|0,note:String(l.note||'').slice(0,80)}; }); }catch(e){ M.cart=[]; } }
+
+var ERR={
+  not_found:'ບໍ່ພົບຮ້ານນີ້ ກວດ QR ອີກຄັ້ງ', inactive:'ຮ້ານປິດຮັບອໍເດີອອນລາຍຊົ່ວຄາວ ກະລຸນາແຈ້ງພະນັກງານ', disabled:'ຮ້ານນີ້ປິດການສັ່ງຜ່ານ QR ກະລຸນາແຈ້ງພະນັກງານ',
+  too_many:'ມີອໍເດີລໍຖ້າຫຼາຍເກີນໄປ ກະລຸນາແຈ້ງພະນັກງານ', item_off:'ມີເມນູທີ່ໝົດແລ້ວ', item_missing:'ເມນູມີການປ່ຽນແປງ ກະລຸນາໂຫຼດໜ້າໃໝ່',
+  bad_table:'ໂຕະບໍ່ຖືກຕ້ອງ', bad_items:'ລາຍການບໍ່ຖືກຕ້ອງ', bad_request:'ຂໍ້ມູນບໍ່ຖືກຕ້ອງ ລອງໃໝ່'
+};
+function errMsg(e){ return ERR[e]||'ສົ່ງບໍ່ສຳເລັດ ລອງໃໝ່ອີກຄັ້ງ'; }
+
+function renderTop(){
+  $('#top').innerHTML='<div class="shop"><b>'+esc(M.shop?M.shop.name:'')+'</b></div>'+(M.table?'<span class="tblname">'+esc(tableName(M.table))+'</span>':'');
+}
+function msgPage(t,sub){ $('#view').innerHTML='<div class="empty card" style="margin-top:30px"><b>'+esc(t)+'</b>'+(sub?'<div style="margin-top:8px">'+esc(sub)+'</div>':'')+'</div>'; $('#bar').innerHTML=''; }
+
+function render(){
+  renderTop();
+  if(!M.shop) return;
+  if(M.sent){ return renderSent(); }
+  if(!M.table) return renderPick();
+  if(M.view==='cart') return renderCart();
+  renderMenu();
+}
+function renderPick(){
+  var h='<div class="sec">ເລືອກໂຕະຂອງທ່ານ</div><div class="tpick">';
+  for(var i=1;i<=M.shop.tables;i++) h+='<button data-act="pick" data-v="t'+i+'">'+i+'</button>';
+  h+='</div><div style="margin-top:14px"><button class="btn ghost block" data-act="pick" data-v="tk">ສັ່ງກັບບ້ານ</button></div>';
+  $('#view').innerHTML=h; $('#bar').innerHTML='';
+}
+function renderMenu(){
+  var cs=cats(), act=M.cat && cs.indexOf(M.cat)>=0 ? M.cat : null;
+  function card(m){
+    var q=qty(m.id);
+    return '<div class="item'+(q?' sel':'')+(m.off?' off':'')+'" data-act="add" data-id="'+esc(m.id)+'" role="button" tabindex="0"><span class="nm">'+esc(m.name)+(m.off?' <small>(ໝົດ)</small>':'')+'</span><span class="pr num">'+fmt(m.price)+' ₭</span>'+
+      (q?'<span class="badge num">'+q+'</span><button class="minus" data-act="dec" data-id="'+esc(m.id)+'" aria-label="ຫຼຸດ">'+IC.minus+'</button>':'')+'</div>';
+  }
+  var chips='<div id="chips"><button class="chip" data-act="cat" data-v="" aria-pressed="'+(!act)+'">ທັງໝົດ</button>'+cs.map(function(c){ return '<button class="chip" data-act="cat" data-v="'+esc(c)+'" aria-pressed="'+(act===c)+'">'+esc(c)+'</button>'; }).join('')+'</div>';
+  var body;
+  if(!M.items.length) body='<div class="empty">ຮ້ານຍັງບໍ່ໄດ້ເພີ່ມເມນູ</div>';
+  else if(act) body='<div class="items">'+M.items.filter(function(m){ return (m.cat||'ອື່ນໆ')===act; }).map(card).join('')+'</div>';
+  else body=cs.map(function(c){ return '<div class="cat">'+esc(c)+'</div><div class="items">'+M.items.filter(function(m){ return (m.cat||'ອື່ນໆ')===c; }).map(card).join('')+'</div>'; }).join('');
+  var keep=$('#view').scrollTop;
+  $('#view').innerHTML=chips+body; $('#view').scrollTop=keep;
+  var n=count();
+  $('#bar').innerHTML='<div class="obar"><button class="btn primary cartbtn" data-act="view" data-v="cart"'+(n?'':' disabled')+'>'+(n?'ເບິ່ງລາຍການສັ່ງ · '+n+' ລາຍການ · <span class="num">'+fmt(subtotal())+' ₭</span>':'ແຕະເມນູເພື່ອເລືອກ')+'</button></div>';
+}
+function renderCart(){
+  var lines=M.cart.map(function(l,k){
+    var m=M.items.find(function(x){ return x.id===l.mid; }); if(!m) return '';
+    return '<div class="line"><div class="info"><b>'+esc(m.name)+'</b><div class="num muted">'+fmt(m.price)+' ₭</div><input class="note-in" data-note="'+k+'" value="'+esc(l.note||'')+'" maxlength="80" placeholder="ໝາຍເຫດ ເຊັ່ນ ບໍ່ເຜັດ" autocomplete="off"></div>'+
+      '<div class="step"><button data-act="ldec" data-i="'+k+'" aria-label="ຫຼຸດ">'+IC.minus+'</button><span class="num">'+l.q+'</span><button data-act="linc" data-i="'+k+'" aria-label="ເພີ່ມ">'+IC.plus+'</button></div></div>';
+  }).join('');
+  var h='<div class="ohead" style="margin:-16px -16px 12px"><button class="iconbtn" data-act="view" data-v="menu" aria-label="ກັບຄືນ">'+IC.back+'</button><h2>ລາຍການສັ່ງ</h2></div>'+
+    '<div class="card">'+(lines||'<div class="empty">ຍັງບໍ່ມີລາຍການ</div>')+'</div>'+
+    (M.table==='tk'?'<label class="f" style="margin-top:12px">ຊື່ຂອງທ່ານ (ໃຫ້ຮ້ານເອີ້ນ)<input id="cname" maxlength="40" value="'+esc(M.name)+'" autocomplete="name"></label>':'')+
+    '<div class="card" style="margin-top:12px"><div class="sumrow big" style="border:0;margin:0;padding-top:0"><span>ລວມລາຍການ</span><span class="num">'+fmt(subtotal())+' ₭</span></div>'+
+    ((M.shop.svc>0||M.shop.vat>0)?'<small>ຄ່າບໍລິການ/ອາກອນ (ຖ້າມີ) ຈະຄິດຕອນຊຳລະເງິນ</small>':'')+'</div>'+
+    (M.err?'<div class="stat short" style="margin-top:12px">'+esc(M.err)+'</div>':'');
+  $('#view').innerHTML=h;
+  $('#bar').innerHTML='<div class="obar"><button class="btn primary cartbtn" data-act="send"'+((M.cart.length&&!M.sending)?'':' disabled')+'>'+(M.sending?'ກຳລັງສົ່ງ…':'ສົ່ງອໍເດີໃຫ້ຮ້ານ')+'</button></div>';
+}
+function renderSent(){
+  var st=M.status, icon='⏳', cls='wait', t='ສົ່ງອໍເດີແລ້ວ ກຳລັງລໍຮ້ານຢືນຢັນ', sub='ກະລຸນາຮັກສາໜ້ານີ້ໄວ້ ພະນັກງານຈະຮັບອໍເດີໃນບໍ່ຊ້າ';
+  if(st==='accepted'){ icon='✓'; cls=''; t='ຮ້ານຮັບອໍເດີແລ້ວ'; sub='ກຳລັງກະກຽມໃຫ້ທ່ານ ຂອບໃຈ!'; }
+  else if(st==='rejected'){ icon='✕'; cls='no'; t='ຮ້ານຍັງຮັບອໍເດີນີ້ບໍ່ໄດ້'; sub='ກະລຸນາແຈ້ງພະນັກງານ'; }
+  $('#view').innerHTML='<div class="okbox"><div class="tick '+cls+'">'+icon+'</div><h2>'+esc(t)+'</h2><div class="muted">'+esc(sub)+'</div>'+
+    '<div class="card" style="width:100%;text-align:left">'+M.sent.lines.map(function(l){ return '<div class="rl"><span>'+esc(l.name)+' <small class="num">× '+l.q+'</small>'+(l.note?'<em>'+esc(l.note)+'</em>':'')+'</span><span class="num">'+fmt(l.price*l.q)+'</span></div>'; }).join('')+
+    '<div class="rl sep tot"><span>ລວມ</span><span class="num">'+fmt(M.sent.total)+' ₭</span></div></div></div>';
+  $('#bar').innerHTML='<div class="obar"><button class="btn ghost cartbtn" data-act="again">ສັ່ງເພີ່ມ</button></div>';
+}
+
+function pollStatus(){
+  clearTimeout(M.poll);
+  if(!M.sent) return;
+  Api.rpc('order_status',{p_slug:SLUG,p_id:M.sent.id}).then(function(st){
+    if(!M.sent) return;
+    if(st && st!==M.status && st!=='none'){ M.status=st; render(); }
+    if(M.status==='new' || st==='none' || !st) M.poll=setTimeout(pollStatus,4000);
+  },function(){ M.poll=setTimeout(pollStatus,6000); });
+}
+
+var A={
+  pick:function(el){ M.table=el.dataset.v; loadCart(); render(); },
+  cat:function(el){ M.cat=el.dataset.v||null; render(); },
+  view:function(el){ M.view=el.dataset.v; M.err=''; render(); },
+  add:function(el){
+    var m=M.items.find(function(x){ return x.id===el.dataset.id; }); if(!m) return;
+    if(m.off){ toast('ເມນູນີ້ໝົດ'); return; }
+    var l=M.cart.find(function(x){ return x.mid===m.id && !x.note; });
+    if(l){ if(l.q<99) l.q++; } else M.cart.push({mid:m.id,q:1,note:''});
+    saveCart(); render();
+  },
+  dec:function(el){
+    for(var k=M.cart.length-1;k>=0;k--){ if(M.cart[k].mid===el.dataset.id){ M.cart[k].q--; if(M.cart[k].q<=0) M.cart.splice(k,1); break; } }
+    saveCart(); render();
+  },
+  linc:function(el){ var l=M.cart[+el.dataset.i]; if(l && l.q<99) l.q++; saveCart(); render(); },
+  ldec:function(el){ var k=+el.dataset.i; if(M.cart[k]){ M.cart[k].q--; if(M.cart[k].q<=0) M.cart.splice(k,1); } saveCart(); if(!M.cart.length) M.view='menu'; render(); },
+  send:function(){
+    if(M.sending || !M.cart.length) return;
+    var nm=$('#cname'); if(nm) M.name=nm.value.trim().slice(0,40);
+    M.sending=true; M.err=''; render();
+    var key='m.nonce.'+SLUG+'.'+M.table, nn=null;
+    try{ nn=sessionStorage.getItem(key); }catch(e){}
+    if(!nn){ nn=nonce(); try{ sessionStorage.setItem(key,nn); }catch(e){} }
+    var payload=M.cart.map(function(l){ return {mid:l.mid,q:l.q,note:l.note||''}; });
+    Api.rpc('place_order',{p_slug:SLUG,p_table:M.table,p_name:M.name,p_items:payload,p_nonce:nn}).then(function(r){
+      M.sending=false;
+      if(!r || !r.ok){ M.err=errMsg(r&&r.error)+(r&&r.name?' ('+r.name+')':''); render(); return; }
+      var lines=M.cart.map(function(l){ var m=M.items.find(function(x){ return x.id===l.mid; })||{name:'',price:0}; return {name:m.name,price:m.price,q:l.q,note:l.note}; });
+      M.sent={id:r.id,lines:lines,total:r.total!=null?r.total:subtotal()}; M.status='new';
+      M.cart=[]; saveCart(); try{ sessionStorage.removeItem(key); }catch(e){}
+      render(); pollStatus();
+    },function(){ M.sending=false; M.err='ສົ່ງບໍ່ສຳເລັດ ກວດອິນເຕີເນັດ ແລ້ວລອງໃໝ່'; render(); });
+  },
+  again:function(){ clearTimeout(M.poll); M.sent=null; M.view='menu'; render(); }
+};
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-act]'); if(!el) return;
+  var f=A[el.dataset.act]; if(f){ e.stopPropagation(); f(el); }
+});
+document.addEventListener('keydown',function(e){
+  if((e.key==='Enter'||e.key===' ') && e.target.getAttribute && e.target.getAttribute('role')==='button' && e.target.dataset.act){ e.preventDefault(); e.target.click(); }
+});
+document.addEventListener('input',function(e){
+  var t=e.target;
+  if(t.dataset && t.dataset.note!==undefined){ var l=M.cart[+t.dataset.note]; if(l){ l.note=t.value.slice(0,80); saveCart(); } }
+  if(t.id==='cname') M.name=t.value.slice(0,40);
+});
+
+function boot(){
+  if(!Api.configured()){ msgPage('ຍັງບໍ່ໄດ້ຕັ້ງຄ່າລະບົບ'); return; }
+  if(!/^[a-z0-9][a-z0-9-]{2,29}$/.test(SLUG)){ msgPage('ລິ້ງບໍ່ຖືກຕ້ອງ','ກະລຸນາສະແກນ QR ທີ່ໂຕະອີກຄັ້ງ'); return; }
+  $('#view').innerHTML='<div class="loading">ກຳລັງໂຫຼດເມນູ…</div>';
+  Api.rpc('public_menu',{p_slug:SLUG}).then(function(r){
+    if(!r || !r.ok){ msgPage(errMsg(r&&r.error)); return; }
+    M.shop=r.shop; M.items=r.items||[]; document.title=M.shop.name;
+    var t=(P.get('t')||'').toLowerCase();
+    M.table = validTable(t) ? t : null;
+    loadCart(); render();
+  },function(){ msgPage('ເຊື່ອມຕໍ່ບໍ່ໄດ້','ກວດອິນເຕີເນັດ ແລ້ວໂຫຼດໜ້າໃໝ່'); });
+}
+window.__m={M:M,A:A};
+boot();
+})();
+</script>
+</body>
+</html>
